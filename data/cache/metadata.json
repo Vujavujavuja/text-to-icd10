@@ -1,0 +1,9 @@
+{
+  "version": "1.0",
+  "dataset": "awacke1/ICD10-Clinical-Terminology",
+  "row_count": 72750,
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+  "embedding_dimension": 384,
+  "created_at": "2026-02-03T10:39:23.552133",
+  "chapter_count": 23
+}

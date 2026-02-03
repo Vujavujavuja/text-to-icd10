@@ -1,0 +1,86 @@
+{
+  "test_cases": [
+    {
+      "name": "Simple Diabetes with Foot Ulcer",
+      "request": {
+        "clinical_notes": "Patient is a 67-year-old male with long-standing type 2 diabetes mellitus, poorly controlled, presenting with diabetic foot ulcer on the left heel. No evidence of osteomyelitis. Started on IV antibiotics.",
+        "min_confidence": 0.6,
+        "enable_llm_extraction": true
+      },
+      "expected_codes": ["E11.621", "E11.65"],
+      "expected_gaps": ["Ulcer depth/stage not specified"]
+    },
+    {
+      "name": "COPD with Respiratory Failure",
+      "request": {
+        "clinical_notes": "Acute exacerbation of COPD with acute hypoxic respiratory failure. Patient requires mechanical ventilation. History of tobacco use disorder.",
+        "labs": {"SpO2": "85%", "PaCO2": "55 mmHg"},
+        "medications": ["Albuterol", "Prednisone"],
+        "min_confidence": 0.6,
+        "enable_llm_extraction": true
+      },
+      "expected_codes": ["J44.1", "J96.01", "F17.210"]
+    },
+    {
+      "name": "Acute MI",
+      "request": {
+        "clinical_notes": "Patient presents with chest pain radiating to left arm. ECG shows ST elevation in anterior leads. Troponin elevated at 5.2 ng/mL. Diagnosed with acute ST elevation myocardial infarction of anterior wall. Taken to cath lab for percutaneous coronary intervention.",
+        "labs": {"Troponin": "5.2 ng/mL", "CK-MB": "elevated"},
+        "min_confidence": 0.6,
+        "enable_llm_extraction": true
+      },
+      "expected_codes": ["I21.09", "I21.01"]
+    },
+    {
+      "name": "Pregnancy with Gestational Diabetes",
+      "request": {
+        "clinical_notes": "32-year-old female at 28 weeks gestation presenting for routine prenatal visit. Diagnosed with gestational diabetes mellitus controlled with diet. Patient also has history of chronic hypertension.",
+        "encounter_metadata": {"gestational_age": "28 weeks"},
+        "min_confidence": 0.6,
+        "enable_llm_extraction": true
+      },
+      "expected_codes": ["O24.410", "O10.0"]
+    },
+    {
+      "name": "Cancer with Anemia",
+      "request": {
+        "clinical_notes": "68-year-old male with metastatic lung adenocarcinoma undergoing chemotherapy. Presenting with severe fatigue and pallor. Labs show hemoglobin 7.2 g/dL. Diagnosed with anemia secondary to malignancy and chemotherapy.",
+        "labs": {"Hemoglobin": "7.2 g/dL"},
+        "medications": ["Cisplatin", "Pemetrexed"],
+        "min_confidence": 0.6,
+        "enable_llm_extraction": true
+      },
+      "expected_codes": ["C34.90", "D63.0"]
+    },
+    {
+      "name": "Depression with Suicidal Ideation",
+      "request": {
+        "clinical_notes": "42-year-old patient presenting to emergency department with severe depressive episode and active suicidal ideation. Patient reports feeling hopeless for the past 2 weeks with plan but no intent. No prior suicide attempts. Psychiatric consult obtained.",
+        "min_confidence": 0.6,
+        "enable_llm_extraction": true
+      },
+      "expected_codes": ["F32.2", "R45.851"]
+    },
+    {
+      "name": "Fracture from Fall",
+      "request": {
+        "clinical_notes": "85-year-old female fell at home and sustained closed fracture of left femoral neck. Patient has history of osteoporosis. X-ray confirms intracapsular fracture. Scheduled for surgical repair.",
+        "imaging": ["X-ray left hip: intracapsular fracture of femoral neck"],
+        "min_confidence": 0.6,
+        "enable_llm_extraction": true
+      },
+      "expected_codes": ["S72.042A", "M80.00"]
+    },
+    {
+      "name": "Complex Multi-Morbidity",
+      "request": {
+        "clinical_notes": "72-year-old patient admitted with acute decompensated heart failure exacerbation. Past medical history significant for: coronary artery disease s/p CABG 5 years ago, atrial fibrillation on anticoagulation, chronic kidney disease stage 3, type 2 diabetes with diabetic nephropathy, and morbid obesity (BMI 42). Patient also has diabetic retinopathy. Presenting with shortness of breath, bilateral lower extremity edema, and weight gain of 10 lbs over past week.",
+        "labs": {"BNP": "1850 pg/mL", "Creatinine": "1.8 mg/dL", "HbA1c": "8.2%"},
+        "medications": ["Furosemide", "Metoprolol", "Warfarin", "Metformin", "Insulin glargine"],
+        "min_confidence": 0.5,
+        "enable_llm_extraction": true
+      },
+      "expected_codes": ["I50.23", "I25.10", "I48.91", "N18.3", "E11.21", "E66.01", "E11.319"]
+    }
+  ]
+}
