@@ -10,8 +10,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Pre-download the embedding model during build so it's cached in the image
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+# Pre-download the embedding model and build the FAISS index
+# (Git LFS pointers aren't resolved by Koyeb, so we rebuild it here)
+RUN python scripts/build_index.py
 
 EXPOSE 8000
 

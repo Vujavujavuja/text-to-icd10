@@ -1,5 +1,6 @@
 # Data artifacts
 data/datasets/
+data/cache/icd10_index.faiss
 
 # Environment
 .env
