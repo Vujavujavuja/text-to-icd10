@@ -263,6 +263,7 @@ Candidate ICD-10 Codes:
 Analyze the clinical text, extract entities, identify documentation gaps, and explain each candidate code."""
 
                 import json
+                import re
                 response = await llm_client.generate(
                     prompt=user_prompt,
                     system=system_prompt,
@@ -275,7 +276,18 @@ Analyze the clinical text, extract entities, identify documentation gaps, and ex
                 elif "```" in response:
                     response = response.split("```")[1].split("```")[0].strip()
 
-                llm_result = json.loads(response)
+                try:
+                    llm_result = json.loads(response)
+                except json.JSONDecodeError:
+                    logger.warning("JSON parse failed, attempting repair...")
+                    fixed = response
+                    fixed = re.sub(r',\s*}', '}', fixed)
+                    fixed = re.sub(r',\s*]', ']', fixed)
+                    fixed = re.sub(r'}\s*{', '},{', fixed)
+                    fixed = re.sub(r'"\s*\n\s*"', '",\n"', fixed)
+                    fixed = re.sub(r'(\w)"\s*\n\s*"', r'\1",\n"', fixed)
+                    llm_result = json.loads(fixed)
+                    logger.info("JSON repair successful")
                 logger.info("LLM analysis completed successfully")
 
                 clinical_entities = llm_result.get("clinical_entities", {})
