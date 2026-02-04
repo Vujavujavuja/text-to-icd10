@@ -165,28 +165,67 @@ async def suggest_codes_clinical(request: ClinicalSuggestRequest):
         EnhancedSuggestResponse with enhanced results and documentation gaps
     """
     try:
-        logger.info(f"Clinical suggest request with LLM={request.enable_llm_extraction}")
+        logger.info(f"Clinical suggest request with LLM extraction={request.enable_llm_extraction}")
 
-        # CORRECT PIPELINE: RAG first, then ONE LLM call for everything
+        # PIPELINE: Extract entities → RAG with focused queries → LLM explains
 
-        # Step 1: RAG/Semantic search (fast, no LLM)
-        logger.info(f"Running RAG search with query: {request.clinical_notes[:100]}...")
-        candidates = retrieval_service.retrieve_codes(request.clinical_notes, top_k=5)
-
-        filtered_candidates = [
-            c for c in candidates
-            if c['confidence_score'] >= request.min_confidence
-        ]
-
-        logger.info(f"RAG found {len(filtered_candidates)} candidates above min_confidence={request.min_confidence}")
-
-        # Step 2: ONE LLM call to process clinical text + all candidates
-        if request.enable_llm_explanations and llm_enabled and llm_client:
-            logger.info("Calling LLM to analyze clinical text + all candidate codes...")
+        # Step 1: LLM extraction to build focused search queries
+        extracted_entities = None
+        if request.enable_llm_extraction and llm_enabled and clinical_extraction_service:
+            logger.info("Step 1: LLM entity extraction from clinical text...")
             try:
-                # Build prompt with clinical text + all candidates
+                extracted_entities = await clinical_extraction_service.extract_from_clinical_note(
+                    request.clinical_notes
+                )
+                logger.info(f"Extracted primary diagnosis: {extracted_entities.primary_diagnosis}")
+                logger.info(f"Comorbidities: {extracted_entities.comorbidities}")
+                logger.info(f"Enriched query: {extracted_entities.enriched_query}")
+            except Exception as e:
+                logger.error(f"LLM extraction failed, falling back to raw text: {e}")
+                extracted_entities = None
+
+        # Step 2: Build search queries from extracted entities
+        if extracted_entities and extracted_entities.primary_diagnosis != "Unknown":
+            search_queries = [extracted_entities.primary_diagnosis]
+            search_queries.extend(extracted_entities.comorbidities)
+            search_queries.extend(extracted_entities.procedures)
+            logger.info(f"Step 2: Running RAG with {len(search_queries)} focused queries: {search_queries}")
+        else:
+            search_queries = [request.clinical_notes]
+            logger.info("Step 2: Running RAG with raw clinical text (no extraction)")
+
+        # Step 3: Run RAG for each query (top 3 per query for diversity), merge results
+        all_candidates = {}
+        per_query_top_k = 3
+        for query in search_queries:
+            if not query:
+                continue
+            candidates = retrieval_service.retrieve_codes(query, top_k=per_query_top_k)
+            for c in candidates:
+                code = c['code']
+                if code not in all_candidates or c['confidence_score'] > all_candidates[code]['confidence_score']:
+                    all_candidates[code] = c
+
+        # Filter by min confidence, sort, take top results
+        max_results = max(5, len(search_queries) * 2)
+        filtered_candidates = sorted(
+            [c for c in all_candidates.values() if c['confidence_score'] >= request.min_confidence],
+            key=lambda x: x['confidence_score'],
+            reverse=True
+        )[:max_results]
+
+        logger.info(f"RAG found {len(filtered_candidates)} candidates from {len(all_candidates)} unique codes")
+
+        # Step 4: LLM analysis of candidates
+        clinical_entities = {}
+        documentation_gaps = []
+        code_analysis = {}
+
+        if request.enable_llm_explanations and llm_enabled and llm_client and filtered_candidates:
+            logger.info("Step 4: LLM analysis of candidate codes...")
+            try:
                 candidates_text = "\n".join([
-                    f"{i+1}. {c['code']}: {c['description']}"
+                    f"{i+1}. {CodeFormatter.normalize_code(c['code'])}: {c['description']}"
                     for i, c in enumerate(filtered_candidates)
                 ])
 
@@ -205,13 +244,15 @@ Return valid JSON with this structure:
   "code_analysis": [
     {
       "code": "E11.621",
-      "explanation": "Why this code matches",
+      "explanation": "Why this code matches or does not match the clinical text",
       "confidence_adjustment": 0.9,
       "requires_review": false,
       "supporting_evidence": ["quotes from clinical text"]
     }
   ]
-}"""
+}
+
+Important: Analyze EVERY candidate code. Set confidence_adjustment > 1.0 for correct codes, < 1.0 for incorrect/irrelevant codes."""
 
                 user_prompt = f"""Clinical Text:
 {request.clinical_notes}
@@ -221,15 +262,14 @@ Candidate ICD-10 Codes:
 
 Analyze the clinical text, extract entities, identify documentation gaps, and explain each candidate code."""
 
+                import json
                 response = await llm_client.generate(
                     prompt=user_prompt,
                     system=system_prompt,
                     temperature=0.0
                 )
-                logger.info(f"LLM returned response, length: {len(response)} chars")
+                logger.info(f"LLM analysis response length: {len(response)} chars")
 
-                # Parse LLM response
-                import json
                 if "```json" in response:
                     response = response.split("```json")[1].split("```")[0].strip()
                 elif "```" in response:
@@ -238,28 +278,32 @@ Analyze the clinical text, extract entities, identify documentation gaps, and ex
                 llm_result = json.loads(response)
                 logger.info("LLM analysis completed successfully")
 
-                # Extract data from LLM response
                 clinical_entities = llm_result.get("clinical_entities", {})
                 documentation_gaps = llm_result.get("documentation_gaps", [])
                 code_analysis = {item["code"]: item for item in llm_result.get("code_analysis", [])}
 
             except Exception as e:
                 logger.error(f"LLM analysis failed: {e}")
-                clinical_entities = {}
                 documentation_gaps = ["LLM analysis failed - using basic results"]
-                code_analysis = {}
-        else:
-            clinical_entities = {}
-            documentation_gaps = []
-            code_analysis = {}
 
-        # Step 3: Format results
+        # Use extraction entities if no LLM analysis entities
+        if not clinical_entities and extracted_entities:
+            clinical_entities = {
+                "symptoms": extracted_entities.symptoms,
+                "anatomical_sites": extracted_entities.anatomical_sites,
+                "laterality": extracted_entities.laterality,
+                "severity": extracted_entities.severity,
+                "chronicity": extracted_entities.chronicity,
+            }
+        if not documentation_gaps and extracted_entities:
+            documentation_gaps = extracted_entities.documentation_gaps
+
+        # Step 5: Format results
         results = []
         for candidate in filtered_candidates:
             formatted_code = CodeFormatter.normalize_code(candidate['code'])
             validation = validation_service.validate_against_chronicle(formatted_code)
 
-            # Get LLM analysis for this code if available
             if formatted_code in code_analysis:
                 analysis = code_analysis[formatted_code]
                 explanation = analysis.get("explanation", candidate['explanation'])
@@ -287,7 +331,6 @@ Analyze the clinical text, extract entities, identify documentation gaps, and ex
                 )
             )
 
-        # Sort by confidence
         results.sort(key=lambda x: x.confidence_score, reverse=True)
 
         logger.info(f"Returning {len(results)} results")

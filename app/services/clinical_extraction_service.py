@@ -22,6 +22,7 @@ class ExtractedEntities(BaseModel):
     severity: Optional[str] = None
     chronicity: Optional[str] = None  # acute, chronic, recurrent
     comorbidities: List[str] = []
+    procedures: List[str] = []  # "percutaneous coronary angioplasty"
     exclusions: List[str] = []  # "no osteomyelitis"
     enriched_query: str  # For RAG
     documentation_gaps: List[str] = []
@@ -70,13 +71,15 @@ Return valid JSON with this structure:
   "severity": "mild|moderate|severe|null",
   "chronicity": "acute|chronic|recurrent|null",
   "comorbidities": ["condition1", "condition2"],
+  "procedures": ["procedure performed or status post procedure"],
   "exclusions": ["excluded condition"],
   "enriched_query": "Expanded clinical search query",
   "documentation_gaps": ["Missing laterality", "Ulcer depth not specified"]
 }
 
 Guidelines:
-- Extract only clinically relevant ICD-10 coding information
+- Extract ALL codeable diagnoses, comorbidities, and procedures
+- Include procedure status (e.g. "status post percutaneous coronary angioplasty") in procedures
 - Identify missing specificity as documentation gaps
 - Generate enriched query combining diagnosis + modifiers
 - Return empty arrays if no items found
