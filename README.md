@@ -81,9 +81,11 @@ curl http://localhost:8080/health
 |----------|-------------|---------|
 | `OPENROUTER_API_KEY` | OpenRouter API key for LLM features | None |
 | `LLM_MODEL` | Model to use | `anthropic/claude-haiku-4.5` |
-| `LLM_ENABLED` | Enable LLM enhancement | `false` |
-| `TOP_K` | Number of results to return | `5` |
-| `MIN_CONFIDENCE_SCORE` | Minimum confidence threshold | `0.5` |
+| `LLM_ENABLED` | Use the LLM when an API key is set (`false` turns it off) | `true` |
+| `LLM_TEMPERATURE` | Sampling temperature for LLM calls | `0.0` |
+| `TOP_K` | Number of results returned by `/suggest` | `5` |
+| `INITIAL_CANDIDATES` | Minimum FAISS candidate pool before re-ranking | `20` |
+| `MIN_CONFIDENCE_SCORE` | Default `min_confidence` for requests | `0.5` |
 
 ## Project Structure
 
@@ -95,7 +97,7 @@ text-to-icd10/
 │   ├── models/schemas.py       # Request/response models
 │   ├── services/
 │   │   ├── llm_client.py       # OpenRouter LLM client
-│   │   ├── llm_service.py      # Clinical extraction service
+│   │   ├── clinical_extraction_service.py # LLM entity extraction
 │   │   ├── retrieval_service.py # RAG retrieval
 │   │   └── ...
 │   └── api/routes.py           # API endpoints

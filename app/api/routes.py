@@ -6,8 +6,9 @@ Defines all API endpoints for the ICD-10 Coding Assistant.
 
 from fastapi import APIRouter, HTTPException
 from loguru import logger
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
+from app.config import settings
 from app.models.schemas import (
     SuggestRequest, SuggestResponse, CodeResult, ValidationStatus,
     ClinicalSuggestRequest, EnhancedSuggestResponse, EnhancedCodeResult
@@ -17,6 +18,11 @@ from app.services.validation_service import ValidationService
 from app.services.clinical_extraction_service import ClinicalExtractionService
 from app.services.code_explanation_service import CodeExplanationService
 from app.utils.code_formatter import CodeFormatter
+from app.utils.llm_json import parse_llm_json
+
+
+# Upper bound on the LLM's confidence multiplier for a candidate code
+MAX_CONFIDENCE_ADJUSTMENT = 1.5
 
 
 # Global service instances (initialized in main.py)
@@ -60,6 +66,52 @@ def init_routes(
     llm_enabled = llm_enabled_flag
 
 
+def build_clinical_context(request: ClinicalSuggestRequest) -> str:
+    """
+    Combine clinical notes with the optional structured inputs
+    (procedures, labs, medications, imaging, encounter metadata)
+    into one text block for the LLM.
+    """
+    sections = [request.clinical_notes.strip()]
+
+    def add_list(title: str, items: Optional[List[str]]):
+        items = [str(i).strip() for i in (items or []) if str(i).strip()]
+        if items:
+            sections.append(f"{title}:\n" + "\n".join(f"- {i}" for i in items))
+
+    def add_dict(title: str, values: Optional[Dict[str, Any]]):
+        if values:
+            sections.append(f"{title}:\n" + "\n".join(f"- {k}: {v}" for k, v in values.items()))
+
+    add_list("Procedures", request.procedures)
+    add_dict("Labs", request.labs)
+    add_list("Medications", request.medications)
+    add_list("Imaging", request.imaging)
+    add_dict("Encounter", request.encounter_metadata)
+
+    return "\n\n".join(sections)
+
+
+def _coerce_adjustment(value: Any) -> float:
+    """Parse the LLM's confidence multiplier, defaulting to 1.0 (no change)."""
+    try:
+        adjustment = float(value)
+    except (TypeError, ValueError):
+        return 1.0
+    return max(0.0, min(adjustment, MAX_CONFIDENCE_ADJUSTMENT))
+
+
+def _index_code_analysis(items: Any) -> Dict[str, Dict[str, Any]]:
+    """Key the LLM's per-code analysis by normalized code, skipping malformed items."""
+    analysis = {}
+    if not isinstance(items, list):
+        return analysis
+    for item in items:
+        if isinstance(item, dict) and item.get("code"):
+            analysis[CodeFormatter.normalize_code(str(item["code"]))] = item
+    return analysis
+
+
 @router.post("/suggest", response_model=SuggestResponse)
 async def suggest_codes(request: SuggestRequest):
     """
@@ -87,7 +139,7 @@ async def suggest_codes(request: SuggestRequest):
           "synonyms": [...],
           "validation_status": {
             "valid": true,
-            "message": "Valid 11th Edition Code."
+            "message": "Valid ICD-10-CM code."
           }
         }
       ]
@@ -97,7 +149,7 @@ async def suggest_codes(request: SuggestRequest):
         logger.info(f"Received suggest request: '{request.text}'")
 
         # Step 1 & 2: Semantic retrieval + hierarchical validation
-        candidates = retrieval_service.retrieve_codes(request.text, top_k=5)
+        candidates = retrieval_service.retrieve_codes(request.text, top_k=settings.top_k)
 
         # Step 3: Filter by minimum confidence score
         filtered_candidates = [
@@ -117,7 +169,7 @@ async def suggest_codes(request: SuggestRequest):
             # Note: Dataset may already have dots, formatter handles both cases
             formatted_code = CodeFormatter.normalize_code(candidate['code'])
 
-            # Validate against Chronicle (mock)
+            # Validate against the loaded ICD-10-CM code set
             validation = validation_service.validate_against_chronicle(formatted_code)
 
             results.append(
@@ -169,13 +221,16 @@ async def suggest_codes_clinical(request: ClinicalSuggestRequest):
 
         # PIPELINE: Extract entities → RAG with focused queries → LLM explains
 
+        # Notes plus optional procedures/labs/medications/imaging/encounter data
+        clinical_context = build_clinical_context(request)
+
         # Step 1: LLM extraction to build focused search queries
         extracted_entities = None
         if request.enable_llm_extraction and llm_enabled and clinical_extraction_service:
             logger.info("Step 1: LLM entity extraction from clinical text...")
             try:
                 extracted_entities = await clinical_extraction_service.extract_from_clinical_note(
-                    request.clinical_notes
+                    clinical_context
                 )
                 logger.info(f"Extracted primary diagnosis: {extracted_entities.primary_diagnosis}")
                 logger.info(f"Comorbidities: {extracted_entities.comorbidities}")
@@ -252,47 +307,34 @@ Return valid JSON with this structure:
   ]
 }
 
-Important: Analyze EVERY candidate code. Set confidence_adjustment > 1.0 for correct codes, < 1.0 for incorrect/irrelevant codes."""
+Important: Analyze EVERY candidate code, using the exact code string from the candidate list.
+confidence_adjustment is a multiplier on the retrieval score between 0.0 and 1.5:
+1.0 keeps the score, above 1.0 for codes the text clearly supports, below 1.0 for incorrect or irrelevant codes."""
 
                 user_prompt = f"""Clinical Text:
-{request.clinical_notes}
+{clinical_context}
 
 Candidate ICD-10 Codes:
 {candidates_text}
 
 Analyze the clinical text, extract entities, identify documentation gaps, and explain each candidate code."""
 
-                import json
-                import re
                 response = await llm_client.generate(
                     prompt=user_prompt,
-                    system=system_prompt,
-                    temperature=0.0
+                    system=system_prompt
                 )
                 logger.info(f"LLM analysis response length: {len(response)} chars")
 
-                if "```json" in response:
-                    response = response.split("```json")[1].split("```")[0].strip()
-                elif "```" in response:
-                    response = response.split("```")[1].split("```")[0].strip()
-
-                try:
-                    llm_result = json.loads(response)
-                except json.JSONDecodeError:
-                    logger.warning("JSON parse failed, attempting repair...")
-                    fixed = response
-                    fixed = re.sub(r',\s*}', '}', fixed)
-                    fixed = re.sub(r',\s*]', ']', fixed)
-                    fixed = re.sub(r'}\s*{', '},{', fixed)
-                    fixed = re.sub(r'"\s*\n\s*"', '",\n"', fixed)
-                    fixed = re.sub(r'(\w)"\s*\n\s*"', r'\1",\n"', fixed)
-                    llm_result = json.loads(fixed)
-                    logger.info("JSON repair successful")
+                llm_result = parse_llm_json(response)
+                if not isinstance(llm_result, dict):
+                    raise ValueError("LLM analysis response is not a JSON object")
                 logger.info("LLM analysis completed successfully")
 
-                clinical_entities = llm_result.get("clinical_entities", {})
-                documentation_gaps = llm_result.get("documentation_gaps", [])
-                code_analysis = {item["code"]: item for item in llm_result.get("code_analysis", [])}
+                entities = llm_result.get("clinical_entities")
+                clinical_entities = entities if isinstance(entities, dict) else {}
+                gaps = llm_result.get("documentation_gaps")
+                documentation_gaps = [str(g) for g in gaps if g] if isinstance(gaps, list) else []
+                code_analysis = _index_code_analysis(llm_result.get("code_analysis"))
 
             except Exception as e:
                 logger.error(f"LLM analysis failed: {e}")
@@ -318,10 +360,11 @@ Analyze the clinical text, extract entities, identify documentation gaps, and ex
 
             if formatted_code in code_analysis:
                 analysis = code_analysis[formatted_code]
-                explanation = analysis.get("explanation", candidate['explanation'])
-                confidence_adjustment = analysis.get("confidence_adjustment", 1.0)
-                requires_review = analysis.get("requires_review", False)
-                supporting_evidence = analysis.get("supporting_evidence", [])
+                explanation = str(analysis.get("explanation") or candidate['explanation'])
+                confidence_adjustment = _coerce_adjustment(analysis.get("confidence_adjustment", 1.0))
+                requires_review = bool(analysis.get("requires_review", False))
+                evidence = analysis.get("supporting_evidence")
+                supporting_evidence = [str(e) for e in evidence if e] if isinstance(evidence, list) else []
                 adjusted_confidence = min(candidate['confidence_score'] * confidence_adjustment, 1.0)
             else:
                 explanation = candidate['explanation']

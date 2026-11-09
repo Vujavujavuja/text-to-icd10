@@ -12,24 +12,31 @@ from loguru import logger
 class LLMClient:
     """Client for OpenRouter API using free models."""
 
-    def __init__(self, api_key: str, model: str = "anthropic/claude-haiku-4.5"):
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "anthropic/claude-haiku-4.5",
+        temperature: float = 0.0
+    ):
         """
         Initialize LLM client.
 
         Args:
             api_key: OpenRouter API key
-            model: Model to use (default: qwen free model)
+            model: OpenRouter model ID
+            temperature: Default sampling temperature (from LLM_TEMPERATURE)
         """
         self.api_key = api_key
         self.base_url = "https://openrouter.ai/api/v1"
         self.model = model
+        self.temperature = temperature
         self.timeout = 180.0  # 3 minutes for slower models like Kimi
 
     async def generate(
         self,
         prompt: str,
         system: Optional[str] = None,
-        temperature: float = 0.0,
+        temperature: Optional[float] = None,
         max_tokens: int = 4000
     ) -> str:
         """
@@ -38,12 +45,15 @@ class LLMClient:
         Args:
             prompt: User prompt
             system: System prompt (optional)
-            temperature: Sampling temperature (0.0 = deterministic)
+            temperature: Sampling temperature; defaults to the client's configured value
             max_tokens: Maximum tokens to generate
 
         Returns:
             Generated text from LLM
         """
+        if temperature is None:
+            temperature = self.temperature
+
         try:
             messages = []
             if system:

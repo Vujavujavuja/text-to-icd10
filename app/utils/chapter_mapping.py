@@ -191,18 +191,35 @@ def detect_chapter_from_query(text: str) -> Optional[str]:
 
     text_lower = text.lower()
 
-    # Score each chapter by keyword matches
+    # Score each chapter by whole-word keyword matches
     chapter_scores = {}
-    for chapter, keywords in CHAPTER_KEYWORDS.items():
-        score = sum(1 for keyword in keywords if keyword in text_lower)
+    for chapter, patterns in _CHAPTER_PATTERNS.items():
+        score = sum(1 for pattern in patterns if pattern.search(text_lower))
         if score > 0:
             chapter_scores[chapter] = score
 
-    # Return chapter with highest score, if any
+    # Return chapter with highest score, if any. Ties go to the chapter
+    # listed first in CHAPTER_KEYWORDS (e.g. "lung cancer" -> Neoplasms).
     if chapter_scores:
         return max(chapter_scores, key=chapter_scores.get)
 
     return None
+
+
+def _keyword_pattern(keyword: str) -> "re.Pattern[str]":
+    """
+    Build a case-insensitive whole-word pattern for a keyword.
+
+    Matches whole words only (so "ear" does not match "heart" or "year",
+    and "labor" does not match "laboratory"), allowing a plural suffix.
+    """
+    return re.compile(r'\b' + re.escape(keyword.lower()) + r'(?:s|es)?\b')
+
+
+_CHAPTER_PATTERNS = {
+    chapter: [_keyword_pattern(keyword) for keyword in keywords]
+    for chapter, keywords in CHAPTER_KEYWORDS.items()
+}
 
 
 def get_all_chapters() -> list:

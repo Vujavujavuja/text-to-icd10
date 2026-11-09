@@ -46,7 +46,6 @@ logger.add(
 data_loader = DataLoader(cache_dir=settings.cache_dir)
 embedding_service = EmbeddingService(model_name=settings.embedding_model)
 vector_store = VectorStore(cache_dir=settings.cache_dir)
-validation_service = ValidationService()
 
 # LLM services (initialized if API key is provided)
 llm_client = None
@@ -96,21 +95,28 @@ async def lifespan(app: FastAPI):
         retrieval_service = RetrievalService(
             embedding_service=embedding_service,
             vector_store=vector_store,
-            chapter_boost_factor=settings.chapter_boost_factor
+            chapter_boost_factor=settings.chapter_boost_factor,
+            initial_candidates=settings.initial_candidates
         )
+
+        # Validate suggestions against the loaded ICD-10-CM code set
+        validation_service = ValidationService(df['code'])
 
         # Initialize LLM services (if enabled)
         global llm_client, clinical_extraction_service, code_explanation_service
         llm_enabled = False
 
-        if settings.openrouter_api_key:
+        if not settings.llm_enabled:
+            logger.info("LLM services disabled (LLM_ENABLED=false)")
+        elif settings.openrouter_api_key:
             logger.info("LLM services enabled - initializing...")
             logger.info(f"Using model: {settings.llm_model}")
 
             try:
                 llm_client = LLMClient(
                     api_key=settings.openrouter_api_key,
-                    model=settings.llm_model
+                    model=settings.llm_model,
+                    temperature=settings.llm_temperature
                 )
                 clinical_extraction_service = ClinicalExtractionService(llm_client)
                 code_explanation_service = CodeExplanationService(llm_client)

@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     # LLM Configuration (OpenRouter)
     openrouter_api_key: Optional[str] = None
     llm_model: str = "anthropic/claude-haiku-4.5"
-    llm_enabled: bool = False  # Set to True when API key is provided
+    llm_enabled: bool = True  # LLM runs when this is true AND an API key is set
     llm_temperature: float = 0.0  # Deterministic for clinical extraction
 
     class Config:
