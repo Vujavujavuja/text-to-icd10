@@ -1,121 +1,131 @@
 """
-Quick test script to verify utility functions work correctly.
+Unit tests for utility functions and the validation service.
 
-Run this before preprocessing to ensure utilities are working.
+These need no model, index or server: run with `pytest tests/test_utilities.py`.
 """
 
+import json
+
+import pytest
+
+from app.services.validation_service import ValidationService
 from app.utils.chapter_mapping import get_chapter_from_code, detect_chapter_from_query
 from app.utils.code_formatter import CodeFormatter
+from app.utils.llm_json import parse_llm_json
 
 
-def test_chapter_mapping():
-    """Test chapter mapping for various code types."""
-    print("=" * 60)
-    print("Testing Chapter Mapping")
-    print("=" * 60)
-
-    test_cases = [
-        ("E11.621", "IV. Endocrine, nutritional and metabolic diseases"),
-        ("E11621", "IV. Endocrine, nutritional and metabolic diseases"),
-        ("C50", "II. Neoplasms"),
-        ("D52", "III. Diseases of the blood and blood-forming organs"),
-        ("D20", "II. Neoplasms"),
-        ("H05", "VII. Diseases of the eye and adnexa"),
-        ("H60", "VIII. Diseases of the ear and mastoid process"),
-        ("I21", "IX. Diseases of the circulatory system"),
-        ("J44", "X. Diseases of the respiratory system"),
-        ("K21", "XI. Diseases of the digestive system"),
-    ]
-
-    all_passed = True
-    for code, expected_chapter in test_cases:
-        result = get_chapter_from_code(code)
-        status = "[PASS]" if result == expected_chapter else "[FAIL]"
-        print(f"{status} {code:10} -> {result}")
-        if result != expected_chapter:
-            print(f"   Expected: {expected_chapter}")
-            all_passed = False
-
-    print(f"\nChapter mapping: {'[PASS]' if all_passed else '[FAIL]'}")
-    return all_passed
+ENDOCRINE = "IV. Endocrine, nutritional and metabolic diseases"
+NEOPLASMS = "II. Neoplasms"
+EAR = "VIII. Diseases of the ear and mastoid process"
+CIRCULATORY = "IX. Diseases of the circulatory system"
+RESPIRATORY = "X. Diseases of the respiratory system"
+MENTAL = "V. Mental, Behavioral and Neurodevelopmental disorders"
+INFECTIOUS = "I. Certain infectious and parasitic diseases"
+NEURO_DEV = MENTAL
 
 
-def test_chapter_detection():
-    """Test chapter detection from query text."""
-    print("\n" + "=" * 60)
-    print("Testing Chapter Detection from Queries")
-    print("=" * 60)
-
-    test_cases = [
-        ("patient with diabetes", "IV. Endocrine, nutritional and metabolic diseases"),
-        ("lung cancer", "II. Neoplasms"),
-        ("heart attack", "IX. Diseases of the circulatory system"),
-        ("asthma exacerbation", "X. Diseases of the respiratory system"),
-        ("depression and anxiety", "V. Mental, Behavioral and Neurodevelopmental disorders"),
-    ]
-
-    all_passed = True
-    for query, expected_chapter in test_cases:
-        result = detect_chapter_from_query(query)
-        status = "[PASS]" if result == expected_chapter else "[WARN]"
-        print(f"{status} '{query}'")
-        print(f"   Detected: {result}")
-        if result != expected_chapter:
-            print(f"   Expected: {expected_chapter}")
-
-    print(f"\nChapter detection: [COMPLETED] (heuristic-based)")
-    return True
+@pytest.mark.parametrize("code, expected", [
+    ("E11.621", ENDOCRINE),
+    ("E11621", ENDOCRINE),
+    ("C50", NEOPLASMS),
+    ("D52", "III. Diseases of the blood and blood-forming organs"),
+    ("D20", NEOPLASMS),
+    ("H05", "VII. Diseases of the eye and adnexa"),
+    ("H60", EAR),
+    ("I21", CIRCULATORY),
+    ("J44", RESPIRATORY),
+    ("K21", "XI. Diseases of the digestive system"),
+])
+def test_chapter_from_code(code, expected):
+    assert get_chapter_from_code(code) == expected
 
 
-def test_code_formatter():
-    """Test code formatting utilities."""
-    print("\n" + "=" * 60)
-    print("Testing Code Formatter")
-    print("=" * 60)
-
-    test_cases = [
-        ("E11621", "E11.621", "Add dots"),
-        ("E11.621", "E11621", "Remove dots"),
-        ("C50", "C50", "Short code (no dots)"),
-        ("E11.621", "E11.621", "Normalize (already formatted)"),
-        ("e11621", "E11.621", "Normalize (lowercase)"),
-    ]
-
-    all_passed = True
-
-    for input_code, expected, description in test_cases:
-        if description == "Add dots":
-            result = CodeFormatter.add_dots(input_code)
-        elif description == "Remove dots":
-            result = CodeFormatter.remove_dots(input_code)
-        else:
-            result = CodeFormatter.normalize_code(input_code)
-
-        status = "[PASS]" if result == expected else "[FAIL]"
-        print(f"{status} {description:25} {input_code:10} -> {result:10} (expected: {expected})")
-        if result != expected:
-            all_passed = False
-
-    print(f"\nCode formatter: {'[PASS]' if all_passed else '[FAIL]'}")
-    return all_passed
+@pytest.mark.parametrize("query, expected", [
+    ("patient with diabetes", ENDOCRINE),
+    ("lung cancer", NEOPLASMS),
+    ("heart attack", CIRCULATORY),
+    ("heart failure", CIRCULATORY),
+    ("asthma exacerbation", RESPIRATORY),
+    ("depression and anxiety", MENTAL),
+    # Uppercase keywords used to never match lowercased text
+    ("Patient is HIV positive", INFECTIOUS),
+    ("Acute exacerbation of COPD", RESPIRATORY),
+    ("child with ADHD", NEURO_DEV),
+    # Plurals still match
+    ("multiple tumors", NEOPLASMS),
+])
+def test_chapter_detection(query, expected):
+    assert detect_chapter_from_query(query) == expected
 
 
-if __name__ == "__main__":
-    print("\nTesting ICD-10 Utility Functions\n")
+@pytest.mark.parametrize("query", [
+    "67-year-old male",       # "ear" inside "year"
+    "early morning symptoms is clear",  # "ear" inside "early"/"clear"
+])
+def test_chapter_detection_ignores_substrings(query):
+    assert detect_chapter_from_query(query) != EAR
 
-    results = []
-    results.append(test_chapter_mapping())
-    results.append(test_chapter_detection())
-    results.append(test_code_formatter())
 
-    print("\n" + "=" * 60)
-    print("FINAL RESULTS")
-    print("=" * 60)
+def test_labor_does_not_match_laboratory():
+    assert detect_chapter_from_query("laboratory results reviewed") is None
 
-    if all(results):
-        print("[PASS] All utility tests passed!")
-        print("\nYou can now run notebooks/preprocessing.ipynb")
-    else:
-        print("[FAIL] Some tests failed. Please review the output above.")
 
-    print()
+@pytest.mark.parametrize("func, code, expected", [
+    (CodeFormatter.add_dots, "E11621", "E11.621"),
+    (CodeFormatter.remove_dots, "E11.621", "E11621"),
+    (CodeFormatter.normalize_code, "C50", "C50"),
+    (CodeFormatter.normalize_code, "E11.621", "E11.621"),
+    (CodeFormatter.normalize_code, "e11621", "E11.621"),
+])
+def test_code_formatter(func, code, expected):
+    assert func(code) == expected
+
+
+@pytest.fixture
+def validator():
+    return ValidationService(["E11621", "E1165", "E119", "I2109", "R51"])
+
+
+@pytest.mark.parametrize("code", ["E11.621", "E11621", "e11.65", "R51"])
+def test_validation_accepts_known_codes(validator, code):
+    assert validator.validate_against_chronicle(code) == {
+        "valid": True, "message": "Valid ICD-10-CM code."
+    }
+
+
+def test_validation_is_deterministic(validator):
+    results = {validator.validate_against_chronicle("E11.621")["valid"] for _ in range(200)}
+    assert results == {True}
+
+
+def test_validation_rejects_unknown_code(validator):
+    result = validator.validate_against_chronicle("Z99.999")
+    assert result["valid"] is False
+    assert "not found" in result["message"]
+
+
+def test_validation_flags_category_headers():
+    validator = ValidationService(["E11", "E11621", "E1165"])
+    result = validator.validate_against_chronicle("E11")
+    assert result["valid"] is False
+    assert "more specific" in result["message"]
+
+
+@pytest.mark.parametrize("text", [
+    '{"a": 1}',
+    '```json\n{"a": 1}\n```',
+    '```\n{"a": 1}\n```',
+    'Here is the result:\n{"a": 1}\nHope that helps!',
+    '{"a": 1,}',
+])
+def test_parse_llm_json(text):
+    assert parse_llm_json(text) == {"a": 1}
+
+
+def test_parse_llm_json_repairs_trailing_commas_in_lists():
+    assert parse_llm_json('{"gaps": ["x", "y",],}') == {"gaps": ["x", "y"]}
+
+
+def test_parse_llm_json_raises_on_garbage():
+    with pytest.raises(json.JSONDecodeError):
+        parse_llm_json("no json here")

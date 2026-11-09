@@ -4,12 +4,12 @@ Clinical Extraction Service
 Extracts structured clinical entities from unstructured clinical text using LLM.
 """
 
-import json
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from loguru import logger
 
 from app.services.llm_client import LLMClient
+from app.utils.llm_json import parse_llm_json
 
 
 class ExtractedEntities(BaseModel):
@@ -24,8 +24,22 @@ class ExtractedEntities(BaseModel):
     comorbidities: List[str] = []
     procedures: List[str] = []  # "percutaneous coronary angioplasty"
     exclusions: List[str] = []  # "no osteomyelitis"
-    enriched_query: str  # For RAG
+    enriched_query: str = ""  # For RAG
     documentation_gaps: List[str] = []
+
+    @field_validator(
+        "symptoms", "anatomical_sites", "comorbidities", "procedures",
+        "exclusions", "documentation_gaps",
+        mode="before"
+    )
+    @classmethod
+    def _coerce_list(cls, value):
+        """Accept null or a single string from the LLM where a list is expected."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value] if value.strip() else []
+        return [str(item) for item in value if item]
 
 
 class ClinicalExtractionService:
@@ -95,20 +109,13 @@ Extract clinical entities and generate enriched query for ICD-10 coding."""
             logger.info("Calling LLM for clinical entity extraction...")
             response = await self.llm_client.generate(
                 prompt=user_prompt,
-                system=system_prompt,
-                temperature=0.0
+                system=system_prompt
             )
 
-            # Parse JSON response
-            logger.debug(f"LLM response: {response[:500]}...")  # Log first 500 chars
-
-            # Extract JSON from markdown code blocks if present
-            if "```json" in response:
-                response = response.split("```json")[1].split("```")[0].strip()
-            elif "```" in response:
-                response = response.split("```")[1].split("```")[0].strip()
-
-            entities_dict = json.loads(response)
+            # Parse JSON response (tolerates code fences and minor syntax errors)
+            entities_dict = parse_llm_json(response)
+            if not isinstance(entities_dict, dict):
+                raise ValueError("LLM extraction response is not a JSON object")
             entities = ExtractedEntities(**entities_dict)
 
             logger.info(f"Successfully extracted entities: {entities.primary_diagnosis}")
@@ -117,7 +124,7 @@ Extract clinical entities and generate enriched query for ICD-10 coding."""
 
             return entities
 
-        except (json.JSONDecodeError, ValueError) as e:
+        except ValueError as e:  # includes JSONDecodeError and pydantic ValidationError
             # Fallback: return minimal entities with original text as query
             logger.error(f"Failed to parse LLM response: {e}")
             logger.warning("Falling back to basic extraction")

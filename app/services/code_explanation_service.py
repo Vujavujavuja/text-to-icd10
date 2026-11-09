@@ -98,8 +98,7 @@ Explain the match and rate confidence."""
             logger.debug(f"Generating explanation for code {code}...")
             response = await self.llm_client.generate(
                 prompt=user_prompt,
-                system=system_prompt,
-                temperature=0.0
+                system=system_prompt
             )
 
             # Parse JSON

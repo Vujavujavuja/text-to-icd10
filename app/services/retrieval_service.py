@@ -21,7 +21,8 @@ class RetrievalService:
         self,
         embedding_service: EmbeddingService,
         vector_store: VectorStore,
-        chapter_boost_factor: float = 1.2
+        chapter_boost_factor: float = 1.2,
+        initial_candidates: int = 20
     ):
         """
         Initialize RetrievalService.
@@ -30,10 +31,12 @@ class RetrievalService:
             embedding_service: Service for encoding queries
             vector_store: Service for vector search
             chapter_boost_factor: Boost factor for chapter matches (default: 1.2 = 20% boost)
+            initial_candidates: Minimum candidate pool fetched from FAISS before re-ranking
         """
         self.embedding_service = embedding_service
         self.vector_store = vector_store
         self.chapter_boost_factor = chapter_boost_factor
+        self.initial_candidates = initial_candidates
 
     def semantic_search(self, query_text: str, top_k: int = 20) -> List[Dict]:
         """
@@ -136,8 +139,8 @@ class RetrievalService:
         logger.info(f"Retrieving codes for query: '{query_text}'")
 
         # Step 1: Semantic retrieval (fetch more for better re-ranking)
-        initial_candidates = top_k * 2  # Fetch 2x for better re-ranking
-        candidates = self.semantic_search(query_text, top_k=initial_candidates)
+        pool_size = max(top_k * 2, self.initial_candidates)
+        candidates = self.semantic_search(query_text, top_k=pool_size)
 
         # Step 2: Hierarchical validation and re-ranking
         ranked_candidates = self.hierarchical_validation(query_text, candidates)

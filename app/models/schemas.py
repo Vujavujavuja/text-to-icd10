@@ -7,6 +7,8 @@ User-specified output format for /suggest endpoint.
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
+from app.config import settings
+
 
 class SuggestRequest(BaseModel):
     """Request model for /suggest endpoint."""
@@ -18,7 +20,7 @@ class SuggestRequest(BaseModel):
         description="Clinical text to map to ICD-10 codes"
     )
     min_confidence: float = Field(
-        default=0.5,
+        default=settings.min_confidence_score,
         ge=0.0,
         le=1.0,
         description="Minimum confidence score (0-1) to return a result. Only codes above this threshold will be returned."
@@ -98,7 +100,7 @@ class ClinicalSuggestRequest(BaseModel):
 
     # Configuration
     min_confidence: float = Field(
-        default=0.5,
+        default=settings.min_confidence_score,
         ge=0.0,
         le=1.0,
         description="Minimum confidence score (0-1) to return a result"
